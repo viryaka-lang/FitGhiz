@@ -24,12 +24,30 @@ function lerpPose(a, b, t) {
 export function solve(pose, ex = {}) {
   const off = ex.armsRel ? pose.torso - 180 : 0;
   const far = { ...pose, ...(pose.far || {}) };
+  delete far.far;
   const J = {};
   J.hip = [0, 0];
   J.shoulder = add(J.hip, pose.torso, L.torso);
   const headA = pose.head ?? pose.torso;
   J.neck = add(J.shoulder, headA, L.neck);
   J.head = add(J.shoulder, headA, L.neck + L.head);
+  // Pédalier : les jambes suivent les pédales par cinématique inverse (hanche ancrée).
+  const crank = ex.fig?.crank;
+  if (crank && pose.crank != null && ex.anchor?.joint === 'hip') {
+    const ik = (src, ang) => {
+      const t = [crank.c[0] + crank.r * Math.cos(rad(ang)) - ex.anchor.at[0], crank.c[1] + crank.r * Math.sin(rad(ang)) - ex.anchor.at[1]];
+      const d = Math.min(Math.hypot(t[0], t[1]), L.thigh + L.shin - 0.5);
+      const a0 = (Math.atan2(t[0], t[1]) * 180) / Math.PI;
+      const cosA = (L.thigh ** 2 + d * d - L.shin ** 2) / (2 * L.thigh * d);
+      src.thigh = a0 + (Math.acos(Math.max(-1, Math.min(1, cosA))) * 180) / Math.PI;
+      const k = add([0, 0], src.thigh, L.thigh);
+      src.shin = (Math.atan2(t[0] - k[0], t[1] - k[1]) * 180) / Math.PI;
+      src.foot = src.shin + 90;
+    };
+    pose = { ...pose };
+    ik(pose, pose.crank);
+    ik(far, pose.crank + 180);
+  }
   const limbs = (src, pre) => {
     const uA = src.uArm + off;
     const fA = src.fArm + off;
@@ -131,6 +149,15 @@ function drawEquipment(eq, J, layer) {
       case 'line':
         s += poly(e.pts, e.thin ? 'eq-cable' : 'eq-line', e.w || 4);
         break;
+      case 'lever': // bras de machine : d'un pivot fixe jusqu'à une articulation
+        s += line(e.from, J[e.to], 'eq-line', e.w || 6);
+        s += `<circle cx="${e.from[0]}" cy="${e.from[1]}" r="${(e.w || 6) * 0.8}" class="eq-pulley"/>`;
+        break;
+      case 'jline': { // coussin qui suit un segment du corps (dossier, appui poitrine…)
+        const [p1, p2] = sideSeg(J[e.a], J[e.b], e.from ?? 0, e.to ?? 1, e.off || 0);
+        s += line(p1, p2, e.cls || 'eq-bench-line', e.w || 8);
+        break;
+      }
       case 'circle':
         s += `<circle cx="${e.x}" cy="${e.y}" r="${e.r}" class="${e.cls || 'eq-pulley'}"/>`;
         break;
@@ -152,7 +179,10 @@ export function renderSVG(ex, pose) {
   s += poly([J.shoulder, J.farelbow, J.farhand], 'limb far', 9);
   s += drawEquipment(eq, J, 'mid');
   // Tronc + tête
-  s += line(J.hip, J.shoulder, 'limb body', 19);
+  if (pose.spine) {
+    const [c] = sideSeg(J.hip, J.shoulder, 0.5, 0.5, pose.spine);
+    s += `<path d="M${f(J.hip[0])},${f(J.hip[1])} Q${f(c[0])},${f(c[1])} ${f(J.shoulder[0])},${f(J.shoulder[1])}" class="limb body" stroke-width="19"/>`;
+  } else s += line(J.hip, J.shoulder, 'limb body', 19);
   s += `<circle cx="${f(J.head[0])}" cy="${f(J.head[1])}" r="${L.head}" class="head"/>`;
   // Membres côté proche
   s += poly([J.hip, J.knee, J.ankle, J.toe], 'limb body', 11);
@@ -181,6 +211,7 @@ export function poseAt(ex, phase) {
   const P = ex.fig.poses;
   if (P.length === 1) return P[0];
   phase = ((phase % 1) + 1) % 1;
+  if (ex.fig.loop === 'linear') return lerpPose(P[0], P[1], phase);
   if (ex.fig.loop === 'cycle') {
     const n = P.length;
     const x = phase * n;

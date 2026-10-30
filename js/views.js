@@ -1,10 +1,10 @@
 // Écrans principaux : Aujourd'hui, Programme, Exercices, Progrès, Profil, Méthode, Bienvenue.
 
 import { EX, EXERCISES, GROUPS } from './data/exercises.js';
-import { CARDIO, CYCLE, SCIENCE, REFERENCES, TAG_LABEL, PLANS } from './data/program.js';
+import { CARDIO, CYCLE, SCIENCE, REFERENCES, TAG_LABEL, PLANS, STYLES } from './data/program.js';
 import { getState, update, today, isoDay, parseDay, exportJSON, importJSON, resetAll, requestPersistence } from './store.js';
 import {
-  fmt, fmtSigned, fmtDate, fmtDuration, parseNum, planOf, cycleInfo, nextTemplate, templateById, resolveEx, buildWorkout,
+  fmt, fmtSigned, fmtDate, fmtDuration, parseNum, planOf, cycleInfo, nextTemplate, templateById, resolveEx, resolveTemplate, isLight, buildWorkout,
   nutrition, weightTrend, weeklyRate, latestWeight, streakWeeks, sessionsThisWeek, sessionStats, bestE1rm, ACTIVITY, RATES,
 } from './logic.js';
 import { esc, ICON, actions, thumb, presc, estMinutes, openSheet, closeSheet, confirmSheet, toast, rerender, isIOS, isStandalone } from './ui.js';
@@ -29,7 +29,7 @@ export function todayView(st) {
   const streak = streakWeeks(st);
   const todayW = st.weights.find((x) => x.date === today());
   const firstMain = next.items.find((i) => i.tag === 'main');
-  const heroEx = EX[resolveEx(st, firstMain?.ex || next.items[0].ex)];
+  const heroEx = EX[resolveTemplate(st, next)[next.items.indexOf(firstMain || next.items[0])]];
   const dateStr = new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
   const hour = new Date().getHours();
   const hello = hour < 18 ? 'Bonjour' : 'Bonsoir';
@@ -199,13 +199,23 @@ export function planView(st) {
         <button class="btn sm" data-act="start" data-id="${s.id}">${ICON.play} Go</button>
       </div>
       <div class="divider"></div>
-      ${s.items.map((it, idx) => {
-        const id = resolveEx(st, it.ex);
-        const ex = EX[id];
-        const firstOfTag = idx === 0 || s.items[idx - 1].tag !== it.tag;
-        return `${firstOfTag ? `<div class="section-label" style="margin-top:${idx ? 14 : 4}px">${it.tag === 'warmup' ? 'Big 3 de McGill' : TAG_LABEL[it.tag]}</div>` : ''}
-        <button class="list-item" style="padding:8px 0;border:0" data-act="ex-sheet" data-id="${id}">${thumb(ex)}<div class="grow"><div class="t">${esc(ex.name)}${id !== it.ex ? ' <span class="tag" style="font-size:11px">remplacé</span>' : ''}</div><div class="s">${presc(ex, it)}</div></div>${ICON.info.replace('<svg', '<svg class="chev"')}</button>`;
-      }).join('')}
+      ${(() => {
+        const ids = resolveTemplate(st, s);
+        let html = '';
+        s.items.forEach((it, idx) => {
+          const id = ids[idx];
+          const ex = EX[id];
+          const firstOfTag = idx === 0 || s.items[idx - 1].tag !== it.tag;
+          if (firstOfTag) html += `<div class="section-label" style="margin-top:${idx ? 14 : 4}px">${it.tag === 'warmup' ? 'Big 3 de McGill' : TAG_LABEL[it.tag]}</div>`;
+          if (isLight(it.tag)) {
+            // Échauffement et étirements : liste compacte
+            html += `${firstOfTag ? '<div class="mini">' : ''}<button class="mini-item" data-act="ex-sheet" data-id="${id}">${thumb(ex, 'thumb mini-thumb')}<span>${esc(ex.name)}</span></button>${idx === s.items.length - 1 || s.items[idx + 1].tag !== it.tag ? '</div>' : ''}`;
+            return;
+          }
+          html += `<button class="list-item" style="padding:8px 0;border:0" data-act="ex-sheet" data-id="${id}">${thumb(ex)}<div class="grow"><div class="t">${esc(ex.name)}${id !== it.ex ? ' <span class="tag" style="font-size:11px">remplacé</span>' : ''}${ex.machine ? ' <span class="tag" style="font-size:11px">machine</span>' : ''}</div><div class="s">${presc(ex, it)}</div></div>${ICON.info.replace('<svg', '<svg class="chev"')}</button>`;
+        });
+        return html;
+      })()}
     </div>`;
   const subs = Object.entries(st.subs).filter(([a, b]) => EX[a] && EX[b]);
   return `
@@ -213,6 +223,9 @@ export function planView(st) {
     ${head('Ton programme', esc(plan.short), `<a class="btn secondary sm" href="#/method">${ICON.book} Méthode</a>`)}
     <div class="seg" role="tablist">
       ${[3, 4].map((d) => `<button class="${d === days ? 'on' : ''}" data-act="set-days" data-d="${d}" role="tab" aria-selected="${d === days}">${d} jours / semaine</button>`).join('')}
+    </div>
+    <div class="seg" role="tablist" style="margin-top:8px">
+      ${STYLES.map((o) => `<button class="${(st.profile.style || 'mixte') === o.v ? 'on' : ''}" data-act="prof-set-str" data-k="style" data-v="${o.v}" role="tab">${o.label}</button>`).join('')}
     </div>
     <p class="sub" style="margin-top:12px">${esc(plan.desc)}</p>
     <h2 class="h2">Cycle de 6 semaines</h2>
@@ -254,8 +267,9 @@ export function methodView() {
 
 // ───────────────────────── Exercices ─────────────────────────
 let exFilter = { q: '', g: 'all' };
+const matchGroup = (e) => exFilter.g === 'all' || (exFilter.g === 'machine' ? e.machine : e.group === exFilter.g);
 export function exercisesView(st) {
-  const list = EXERCISES.filter((e) => (exFilter.g === 'all' || e.group === exFilter.g) &&
+  const list = EXERCISES.filter((e) => matchGroup(e) &&
     (!exFilter.q || (e.name + ' ' + e.muscles + ' ' + e.equipment).toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '').includes(exFilter.q)));
   return `
   <div class="view">
@@ -263,19 +277,20 @@ export function exercisesView(st) {
     <div class="search">${ICON.search}<input class="input" type="search" id="ex-q" placeholder="Rechercher un exercice, un muscle…" value="${esc(exFilter.q)}" autocomplete="off"></div>
     <div class="chips">
       <button class="chip ${exFilter.g === 'all' ? 'on' : ''}" data-act="ex-group" data-g="all">Tous</button>
+      <button class="chip ${exFilter.g === 'machine' ? 'on' : ''}" data-act="ex-group" data-g="machine">Machines</button>
       ${Object.entries(GROUPS).map(([k, v]) => `<button class="chip ${exFilter.g === k ? 'on' : ''}" data-act="ex-group" data-g="${k}">${v}</button>`).join('')}
     </div>
     <div class="list" style="margin-top:14px" id="ex-list">${exList(list)}</div>
   </div>`;
 }
 const exList = (list) => list.length
-  ? list.map((e) => `<a class="list-item" href="#/exercise/${e.id}">${thumb(e)}<div class="grow"><div class="t">${esc(e.name)}</div><div class="s">${esc(e.muscles)}</div></div>${ICON.chev}</a>`).join('')
+  ? list.map((e) => `<a class="list-item" href="#/exercise/${e.id}">${thumb(e)}<div class="grow"><div class="t">${esc(e.name)}${e.machine ? ' <span class="tag" style="font-size:11px">machine</span>' : ''}</div><div class="s">${esc(e.muscles)}</div></div>${ICON.chev}</a>`).join('')
   : '<div class="empty">Aucun exercice trouvé</div>';
 
 actions['ex-group'] = (el) => { exFilter.g = el.dataset.g; rerender(); };
 export function onExSearch(el) {
   exFilter.q = el.value.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '').trim();
-  const list = EXERCISES.filter((e) => (exFilter.g === 'all' || e.group === exFilter.g) &&
+  const list = EXERCISES.filter((e) => matchGroup(e) &&
     (!exFilter.q || (e.name + ' ' + e.muscles + ' ' + e.equipment).toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '').includes(exFilter.q)));
   document.getElementById('ex-list').innerHTML = exList(list);
 }
@@ -391,7 +406,7 @@ function weekStart(d) {
 }
 
 function strengthTab(st) {
-  const withData = EXERCISES.filter((e) => e.track === 'wr' && exerciseHistory(st, e.id).some((h) => bestE1rm(h.sets) > 0));
+  const withData = EXERCISES.filter((e) => e.track === 'wr' && !e.assist && exerciseHistory(st, e.id).some((h) => bestE1rm(h.sets) > 0));
   if (!forceEx || !withData.some((e) => e.id === forceEx)) forceEx = withData.find((e) => ['squat', 'deadlift', 'bench'].includes(e.id))?.id || withData[0]?.id;
   // Volume hebdomadaire (8 semaines)
   const weeks = [];
@@ -519,6 +534,8 @@ export function profileView(st) {
         <label class="field"><span>Poids visé</span><div class="input-unit"><input class="input" data-prof="goalWeight" inputmode="decimal" value="${p.goalWeight ? String(p.goalWeight).replace('.', ',') : ''}" placeholder="—"><em>kg</em></div></label>
       </div>
     </div>
+    <h2 class="h2">Style d’entraînement</h2>
+    <div class="options">${STYLES.map((o) => `<button class="option ${(p.style || 'mixte') === o.v ? 'on' : ''}" data-act="prof-set-str" data-k="style" data-v="${o.v}"><div><b>${o.label}</b><small>${o.hint}</small></div></button>`).join('')}</div>
     <h2 class="h2">Activité quotidienne</h2>
     ${sel('activity', ACTIVITY)}
     <h2 class="h2">Rythme de perte</h2>
@@ -559,6 +576,10 @@ export function onProfileInput(el) {
   update((st) => { st.profile[k] = v; });
 }
 actions['prof-set'] = (el) => update((st) => { st.profile[el.dataset.k] = +el.dataset.v; });
+actions['prof-set-str'] = (el) => {
+  update((st) => { st.profile[el.dataset.k] = el.dataset.v; });
+  if (el.dataset.k === 'style') toast(el.dataset.v === 'machines' ? 'Priorité aux machines activée' : 'Style mixte activé');
+};
 actions['toggle-sound'] = () => update((st) => { st.prefs.sound = st.prefs.sound === false; });
 actions['restart-cycle'] = async () => {
   if (await confirmSheet({ title: 'Recommencer le cycle ?', text: 'La semaine 1 commencera aujourd’hui. Ton historique est conservé.', ok: 'Recommencer' })) {
@@ -593,7 +614,7 @@ actions['reset'] = async () => {
 };
 
 // ───────────────────────── Bienvenue ─────────────────────────
-let onb = { step: 0, d: { sex: 'm', days: 3, activity: 1.375, rate: 0.5 } };
+let onb = { step: 0, d: { sex: 'm', days: 3, style: 'mixte', activity: 1.375, rate: 0.5 } };
 export function onboardingView() {
   const d = onb.d;
   const dots = `<div class="dots">${[0, 1, 2].map((i) => `<i class="${i === onb.step ? 'on' : ''}"></i>`).join('')}</div>`;
@@ -603,7 +624,7 @@ export function onboardingView() {
       <img class="logo" src="icons/icon-192.png" alt="">
       <h1>Plus fort, plus léger,<br>le dos solide.</h1>
       <p class="sub">Ton coach de salle de sport, basé sur la science.</p>
-      ${feat('plan', 'Un programme efficace', 'Full body 3 jours ou haut/bas 4 jours, cycles de 6 semaines avec décharge.')}
+      ${feat('plan', 'Un programme efficace', 'Full body 3 jours ou haut/bas 4 jours, machines et barres, échauffement et étirements inclus.')}
       ${feat('spine', 'Priorité au bas du dos', 'Big 3 de McGill à chaque séance, charnière de hanche et gainage progressif.')}
       ${feat('dumbbell', 'Chaque exercice illustré', 'Animations, consignes, erreurs fréquentes et alternatives.')}
       ${feat('chart', 'Progression automatique', 'Charges suggérées, records, tendance du poids et cible calorique.')}
@@ -632,6 +653,8 @@ export function onboardingView() {
       <h1>Ton programme</h1>
       <div class="field" style="margin-top:14px"><span>Séances de musculation par semaine</span>
         <div class="options">${[3, 4].map((n) => `<button class="option ${d.days === n ? 'on' : ''}" data-act="onb-set" data-k="days" data-v="${n}"><div><b>${PLANS[n].name}</b><small>${n === 3 ? 'Idéal pour débuter ou reprendre · ≈ 60 min' : 'Plus de volume · ≈ 60–70 min'}</small></div></button>`).join('')}</div></div>
+      <div class="field" style="margin-top:16px"><span>Style d’entraînement</span>
+        <div class="options">${STYLES.map((o) => `<button class="option ${d.style === o.v ? 'on' : ''}" data-act="onb-set" data-k="style" data-v="${o.v}"><div><b>${o.label}</b><small>${o.hint}</small></div></button>`).join('')}</div></div>
       <div class="field" style="margin-top:16px"><span>Activité quotidienne (hors séances)</span>
         <div class="options">${ACTIVITY.map((a) => `<button class="option ${d.activity === a.v ? 'on' : ''}" data-act="onb-set" data-k="activity" data-v="${a.v}"><div><b>${a.label}</b><small>${a.hint}</small></div></button>`).join('')}</div></div>
       <div class="field" style="margin-top:16px"><span>Rythme de perte de poids</span>

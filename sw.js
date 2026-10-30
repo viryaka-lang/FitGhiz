@@ -1,6 +1,6 @@
 // Service worker : application disponible hors ligne.
 // Incrémente VERSION à chaque déploiement pour proposer la mise à jour.
-const VERSION = 'fitghiz-v1';
+const VERSION = 'fitghiz-v2';
 const ASSETS = [
   './',
   'index.html',

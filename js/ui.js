@@ -2,6 +2,7 @@
 
 import { figureSVG } from './figure.js';
 import { fmt } from './logic.js';
+import { EX } from './data/exercises.js';
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
@@ -60,7 +61,9 @@ export function estMinutes(items) {
   let s = 0;
   for (const it of items) {
     const [a, b] = it.reps;
-    if (it.tag === 'cardio') { s += ((a + b) / 2) * 60; continue; }
+    if (EX[it.ex]?.track === 'cardio') { s += ((a + b) / 2) * 60; continue; }
+    if (it.tag === 'stretch') { s += (EX[it.ex]?.perSide ? 2 : 1) * a + 15; continue; }
+    if (it.tag === 'prep') { s += 45; continue; }
     s += it.sets * (40 + (it.rest || 60));
   }
   return Math.round(s / 60 / 5) * 5;

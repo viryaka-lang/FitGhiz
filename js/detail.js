@@ -40,7 +40,7 @@ const topOf = (sets) => sets.reduce((a, b) => ((b.w || 0) > (a.w || 0) || ((b.w 
 export function exerciseDetailHTML(st, ex, { inSheet = false } = {}) {
   const hist = exerciseHistory(st, ex.id);
   const last = hist[hist.length - 1];
-  const best = ex.track === 'wr' ? Math.max(0, ...hist.map((h) => bestE1rm(h.sets))) : 0;
+  const best = ex.track === 'wr' && !ex.assist ? Math.max(0, ...hist.map((h) => bestE1rm(h.sets))) : 0;
   const alts = (ex.alts || []).map((id) => EX[id]).filter(Boolean);
   return `
     <div class="stage" data-stage="${ex.id}"></div>
@@ -49,7 +49,7 @@ export function exerciseDetailHTML(st, ex, { inSheet = false } = {}) {
       <button class="btn ghost sm" data-play aria-label="Pause">${ICON.pause}</button>
     </div>
     <div class="tags" style="margin-top:10px">
-      <span class="tag accent">${esc(GROUPS[ex.group])}</span>
+      <span class="tag accent">${esc(GROUPS[ex.group])}</span>${ex.machine ? '<span class="tag accent">Machine</span>' : ''}
       ${(ex.highlight || []).map((m) => `<span class="tag">${MUSCLE_NAMES[m] || m}</span>`).join('')}
     </div>
     <p class="sub" style="margin-top:10px"><b>Muscles :</b> ${esc(ex.muscles)}<br><b>Matériel :</b> ${esc(ex.equipment)}${ex.holdNote ? `<br><b>Tempo :</b> ${esc(ex.holdNote)}` : ''}</p>
@@ -60,7 +60,7 @@ export function exerciseDetailHTML(st, ex, { inSheet = false } = {}) {
       ${best ? `<div class="stat"><div class="k">1RM estimé (record)</div><div class="v">${fmt(best)}<small>kg</small></div><div class="d">Formule d’Epley</div></div>`
               : `<div class="stat"><div class="k">Séances</div><div class="v">${hist.length}</div><div class="d">réalisées</div></div>`}
     </div>
-    ${ex.track === 'wr' && hist.length > 1 ? `<div class="card" style="margin-top:12px"><div class="card-title">Progression · 1RM estimé</div><div data-chart="e1rm"></div></div>` : ''}
+    ${ex.track === 'wr' && !ex.assist && hist.length > 1 ? `<div class="card" style="margin-top:12px"><div class="card-title">Progression · 1RM estimé</div><div data-chart="e1rm"></div></div>` : ''}
     ` : ''}
 
     <h3 class="h2">Exécution</h3>

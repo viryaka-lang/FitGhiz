@@ -7,10 +7,14 @@ Coach de musculation en français, installable sur iPhone et iPad (PWA) :
 
 - **Programme scientifique** : full body 3 jours ou haut/bas 4 jours, cycles de 6 semaines
   (RIR 3 → 1 puis semaine de décharge), double progression automatique des charges.
+- **Large place aux machines** (23 machines et poulies) : style « Mixte » (barres pour la force,
+  machines pour le volume) ou « Priorité machines » (équivalents guidés des exercices à la barre).
+- **Échauffement et retour au calme** à chaque séance : vélo ou rameur + mobilité (chat-chameau,
+  fente avec rotation…) avant, étirements statiques des hanches, ischios, fessiers et pectoraux après.
 - **Priorité au bas du dos** : Big 3 de McGill (curl-up, bird dog, planche latérale) à chaque séance,
   charnière de hanche, extensions lombaires, portages et anti-rotation. Douleur notée avant chaque
   séance, avec des variantes plus douces proposées dès 4/10.
-- **31 exercices illustrés** : silhouettes animées (muscles sollicités en couleur), consignes,
+- **57 exercices illustrés** : silhouettes animées (muscles sollicités en couleur), consignes,
   erreurs fréquentes, conseils pour le dos et alternatives.
 - **Séance guidée** : charges suggérées, échauffement calculé, minuteur de repos avec signal sonore,
   chrono de gainage, remplacement d’exercice, écran maintenu allumé.

@@ -1,7 +1,7 @@
 // Règles du programme : progression, suggestions de charge, nutrition, tendances.
 
 import { EX } from './data/exercises.js';
-import { PLANS, CYCLE, CARDIO } from './data/program.js';
+import { PLANS, CYCLE, CARDIO, MACHINE_EQUIV } from './data/program.js';
 import { today, daysBetween, parseDay, isoDay, uid } from './store.js';
 
 // ── Formatage (fr-FR) ──
@@ -50,7 +50,31 @@ export function nextTemplate(st) {
   return plan.sessions[(ids.indexOf(last.templateId) + 1) % ids.length];
 }
 
-export const resolveEx = (st, id) => (st.subs[id] && EX[st.subs[id]] ? st.subs[id] : id);
+export function resolveEx(st, id) {
+  if (st.subs[id] && EX[st.subs[id]]) return st.subs[id];
+  if (st.profile?.style === 'machines' && MACHINE_EQUIV[id]) return [].concat(MACHINE_EQUIV[id])[0];
+  return id;
+}
+
+// Résout les exercices d'une séance (remplacements + style machines) sans créer de doublon.
+export function resolveTemplate(st, tpl) {
+  const orig = new Set(tpl.items.map((i) => i.ex));
+  const used = new Set();
+  return tpl.items.map((it) => {
+    let id = it.ex;
+    if (st.subs[id] && EX[st.subs[id]]) id = st.subs[id];
+    else {
+      const opts = st.profile?.style === 'machines' ? [].concat(MACHINE_EQUIV[id] || []) : [];
+      const m = opts.find((o) => !orig.has(o) && !used.has(o));
+      if (m) id = m;
+    }
+    used.add(id);
+    return id;
+  });
+}
+
+const LIGHT_TAGS = ['prep', 'stretch'];
+export const isLight = (tag) => LIGHT_TAGS.includes(tag);
 
 // ── Historique ──
 export function lastPerf(st, exId, beforeTs = Infinity) {
@@ -85,6 +109,16 @@ export function suggest(st, exId, item, cyc) {
   const out = { weight: null, reps: hi, note: '', trend: 'new', last };
   const unit = ex.track === 'time' || ex.track === 'wtime' ? 's' : ex.track === 'cardio' ? 'min' : 'rép.';
 
+  if (isLight(item.tag)) {
+    out.reps = ex.track === 'time' || ex.track === 'cardio' ? hi : lo;
+    out.note = item.tag === 'stretch'
+      ? 'Étirement doux, sans douleur : respire lentement et relâche.'
+      : ex.track === 'cardio' ? 'Effort facile pour monter en température.' : 'Mouvement lent et contrôlé, amplitude progressive.';
+    out.trend = 'light';
+    out.last = null;
+    return out;
+  }
+
   if (!last) {
     out.reps = ex.track === 'time' || ex.track === 'wtime' || ex.track === 'cardio' ? lo : hi;
     out.note = ex.track === 'wr' || ex.track === 'wtime'
@@ -106,6 +140,25 @@ export function suggest(st, exId, item, cyc) {
     out.reps = Math.min(hi, (top.r || lo) + (top.r >= hi ? 0 : 5));
     out.note = top.r >= hi ? 'Durée max atteinte : augmente l’intensité (pente, vitesse).' : 'Ajoute ~5 min par rapport à la dernière fois.';
     out.trend = 'up';
+    return out;
+  }
+
+  if (ex.assist && w > 0) {
+    if (allTop) {
+      out.weight = Math.max(0, roundTo(w - ex.inc, 1.25));
+      out.reps = lo;
+      out.note = `Haut de fourchette atteint : assistance −${fmt(ex.inc)} kg 💪`;
+      out.trend = 'up';
+    } else if (lowCount >= Math.ceil(working.length / 2)) {
+      out.weight = w + ex.inc;
+      out.reps = lo;
+      out.note = `Séance précédente difficile : assistance +${fmt(ex.inc)} kg.`;
+      out.trend = 'down';
+    } else {
+      out.note = 'Même assistance, vise +1 répétition.';
+      out.trend = 'same';
+    }
+    if (cyc.deload) { out.note = 'Décharge : même assistance, moitié des séries, effort léger.'; out.trend = 'deload'; }
     return out;
   }
 
@@ -153,10 +206,11 @@ export function warmupSets(ex, weight) {
 // Crée une séance en cours à partir d'un modèle.
 export function buildWorkout(st, tpl) {
   const cyc = cycleInfo(st);
+  const ids = resolveTemplate(st, tpl);
   const items = tpl.items.map((it, idx) => {
-    const exId = resolveEx(st, it.ex);
+    const exId = ids[idx];
     const sug = suggest(st, exId, it, cyc);
-    const nSets = cyc.deload && it.tag !== 'warmup' && it.tag !== 'cardio' ? Math.max(1, Math.ceil(it.sets / 2)) : it.sets;
+    const nSets = cyc.deload && ['main', 'acc', 'core'].includes(it.tag) ? Math.max(1, Math.ceil(it.sets / 2)) : it.sets;
     return {
       key: idx,
       exId,
@@ -188,7 +242,7 @@ export function sessionStats(s) {
     for (const x of it.sets) {
       if (!x.done) continue;
       sets++;
-      if (ex?.track === 'wr' || ex?.track === 'reps') {
+      if ((ex?.track === 'wr' || ex?.track === 'reps') && !ex.assist) {
         reps += x.r || 0;
         volume += (x.w || 0) * (x.r || 0) * (ex.perSide ? 2 : 1);
       }
@@ -202,7 +256,7 @@ export function findPRs(st, session) {
   const prs = [];
   for (const it of session.items) {
     const ex = EX[it.exId];
-    if (ex?.track !== 'wr') continue;
+    if (ex?.track !== 'wr' || ex.assist) continue;
     const now = bestE1rm(it.sets.filter((s) => s.done));
     if (!now) continue;
     let before = 0;

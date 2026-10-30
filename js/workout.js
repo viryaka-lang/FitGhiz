@@ -3,7 +3,7 @@
 import { EX } from './data/exercises.js';
 import { BACK_FRIENDLY, TAG_LABEL } from './data/program.js';
 import { getState, update } from './store.js';
-import { suggest, cycleInfo, fmt, fmtClock, parseNum, sessionStats, findPRs, warmupSets, fmtDuration } from './logic.js';
+import { suggest, cycleInfo, isLight, fmt, fmtClock, parseNum, sessionStats, findPRs, warmupSets, fmtDuration } from './logic.js';
 import { esc, ICON, actions, thumb, presc, openSheet, closeSheet, confirmSheet, toast, beep, unlockAudio, rerender, unitOf, navigate } from './ui.js';
 import { openExerciseSheet, setLabel } from './detail.js';
 
@@ -14,7 +14,11 @@ const COLS = {
   wtime: [{ f: 'w', label: 'kg', dec: true }, { f: 'r', label: 'Secondes' }],
   cardio: [{ f: 'r', label: 'Minutes' }, { f: 'km', label: 'km', dec: true }],
 };
-const colsOf = (ex) => (ex.track === 'reps' && !ex.inc ? [{ f: 'r', label: 'Répétitions', span: 2 }] : COLS[ex.track]);
+const colsOf = (ex) => {
+  if (ex.track === 'reps' && !ex.inc) return [{ f: 'r', label: 'Répétitions', span: 2 }];
+  if (ex.assist) return [{ f: 'w', label: 'Assist. kg', dec: true }, { f: 'r', label: 'Rép.' }];
+  return COLS[ex.track];
+};
 const inVal = (n) => (n == null ? '' : String(n).replace('.', ','));
 
 function counts(a) {
@@ -55,26 +59,27 @@ function itemCard(st, it, i) {
     sugHTML = `<div class="ex-sug">${esc(sug.note)}</div>`;
   }
   const wu = done === 0 ? warmupSets(ex, it.sets[0]?.w ?? sug.weight) : null;
-  const timed = ex.track === 'time' || ex.track === 'wtime';
+  const timed = ex.track === 'time' || ex.track === 'wtime' || ex.track === 'cardio';
+  const light = isLight(it.target.tag);
   return `
-  <div class="ex-card ${done === it.sets.length ? 'done' : ''}" id="ex-${i}">
+  <div class="ex-card ${done === it.sets.length ? 'done' : ''} ${light ? 'light' : ''}" id="ex-${i}">
     <div class="ex-head">
       <button data-act="ex-info" data-i="${i}" aria-label="Voir l’exercice ${esc(ex.name)}">${thumb(ex)}</button>
       <div class="grow">
         <div class="ex-name">${esc(ex.name)}${it.exId !== it.origExId ? ' <span class="tag" style="font-size:11px">remplacé</span>' : ''}</div>
-        <div class="ex-presc">${presc(ex, it.target, { sets: it.sets.length })}${ex.track === 'wr' || ex.track === 'reps' ? ` · RIR ${a.rir}` : ''}</div>
+        <div class="ex-presc">${presc(ex, it.target, { sets: it.sets.length, rest: !light })}${(ex.track === 'wr' || ex.track === 'reps') && !light && it.target.tag !== 'warmup' ? ` · RIR ${a.rir}` : ''}</div>
       </div>
       <button class="icon-btn" data-act="ex-swap" data-i="${i}" aria-label="Remplacer l’exercice">${ICON.swap}</button>
     </div>
-    ${sugHTML}
+    ${light ? '' : sugHTML}
     ${wu ? `<div class="warmup"><b>Échauffement :</b> ${wu.join(' → ')}</div>` : ''}
     <div class="sets">
       <div class="set-row head"><div>Série</div>${cols.map((c) => `<div ${c.span ? 'style="grid-column:span 2"' : ''}>${c.label}</div>`).join('')}<div></div></div>
       ${it.sets.map((s, j) => setRow(it, i, s, j)).join('')}
     </div>
     <div class="set-actions">
-      <button class="btn secondary sm" data-act="set-add" data-i="${i}">${ICON.plus} Série</button>
-      ${it.sets.length > 1 ? `<button class="btn secondary sm" data-act="set-remove" data-i="${i}">${ICON.minus} Série</button>` : ''}
+      ${light ? '' : `<button class="btn secondary sm" data-act="set-add" data-i="${i}">${ICON.plus} Série</button>`}
+      ${it.sets.length > 1 && !light ? `<button class="btn secondary sm" data-act="set-remove" data-i="${i}">${ICON.minus} Série</button>` : ''}
       ${timed ? `<button class="btn secondary sm" data-act="hold" data-i="${i}">${ICON.timer} Chrono</button>` : ''}
       <button class="btn ghost sm" data-act="ex-info" data-i="${i}">${ICON.info} Consignes</button>
     </div>
@@ -88,7 +93,7 @@ export function workoutView(st) {
   const body = a.items.map((it, i) => {
     let h = '';
     const tag = it.target.tag;
-    const label = tag === 'warmup' ? 'Activation du tronc · Big 3 de McGill' : tag === 'main' ? 'Exercices principaux' : TAG_LABEL[tag];
+    const label = { prep: 'Échauffement · ≈ 8 min', warmup: 'Activation du tronc · Big 3 de McGill', main: 'Exercices principaux', stretch: 'Retour au calme · étirements' }[tag] || TAG_LABEL[tag];
     if (tag !== lastTag) h += `<div class="section-label">${label}</div>`;
     lastTag = tag;
     return h + itemCard(st, it, i);
@@ -398,14 +403,16 @@ actions['hold'] = (el) => {
   const ex = EX[it.exId];
   const j = it.sets.findIndex((s) => !s.done);
   if (j < 0) { toast('Toutes les séries sont validées'); return; }
-  const target = it.sets[j].r || it.sug.reps || it.target.reps[0];
+  const mult = ex.track === 'cardio' ? 60 : 1;
+  const target = (it.sets[j].r || it.sug.reps || it.target.reps[0]) * mult;
+  const show = (sec) => (mult === 60 ? fmtClock(sec) : String(sec));
   const C = 2 * Math.PI * 94;
   let phase = 'ready', t0 = 0, raf = 0, finished = false, side = 1;
   openSheet(`
     <div class="sheet-head"><h3 class="h3">${esc(ex.name)} · série ${j + 1}</h3><button class="icon-btn" data-act="close-sheet" aria-label="Fermer">${ICON.x}</button></div>
     ${ex.perSide ? '<p class="sub small" style="text-align:center">Côté gauche puis côté droit, avec 5 s pour changer.</p>' : ''}
-    <div class="ring" style="margin-top:12px"><svg viewBox="0 0 220 220"><circle class="bg" cx="110" cy="110" r="94"/><circle class="fg" cx="110" cy="110" r="94" stroke-dasharray="${C}" stroke-dashoffset="0"/></svg><div class="t" data-t>${target}</div></div>
-    <p class="sub" style="text-align:center;margin-top:8px" data-msg>Objectif : ${target} ${unitOf(ex)}</p>
+    <div class="ring" style="margin-top:12px"><svg viewBox="0 0 220 220"><circle class="bg" cx="110" cy="110" r="94"/><circle class="fg" cx="110" cy="110" r="94" stroke-dasharray="${C}" stroke-dashoffset="0"/></svg><div class="t" data-t>${show(target)}</div></div>
+    <p class="sub" style="text-align:center;margin-top:8px" data-msg>Objectif : ${target / mult} ${unitOf(ex)}${ex.perSide ? ' par côté' : ''}</p>
     <div class="grid2" style="margin-top:16px">
       <button class="btn secondary" data-stop>Valider maintenant</button>
       <button class="btn" data-go>Démarrer</button>
@@ -422,7 +429,7 @@ actions['hold'] = (el) => {
           if (el >= 3) { phase = 'hold'; t0 = performance.now(); beep(1); msg.textContent = 'Tiens bon, respire calmement'; }
         } else if (phase === 'hold') {
           const left = target - el;
-          tEl.textContent = Math.max(0, Math.ceil(left));
+          tEl.textContent = show(Math.max(0, Math.ceil(left)));
           fg.style.strokeDashoffset = String(C * Math.min(1, el / target));
           if (left <= 0 && ex.perSide && side === 1) {
             side = 2; phase = 'switch'; t0 = performance.now(); beep(2);
@@ -449,7 +456,7 @@ actions['hold'] = (el) => {
         cancelAnimationFrame(raf);
         update((st2) => {
           const s2 = st2.active.items[i].sets[j];
-          s2.r = secs;
+          s2.r = mult === 60 ? Math.max(1, Math.round(secs / 60)) : secs;
           s2.done = true;
           const rest = it.target.rest || 0;
           st2.active.restEnd = rest ? Date.now() + rest * 1000 : null;
